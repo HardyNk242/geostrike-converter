@@ -1,0 +1,5 @@
+{
+  "name": "GeoStrike Converter",
+  "description": "A geological compass tool to convert plane notations between Quadrant, Azimuth, RHR, and Dip/DipDirection formats.",
+  "requestFramePermissions": []
+}
