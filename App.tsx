@@ -1,5 +1,6 @@
 import React from 'react';
 import ConverterCard from './components/ConverterCard';
+import BatchConverter from './components/BatchConverter';
 
 const App: React.FC = () => {
   return (
@@ -30,6 +31,8 @@ const App: React.FC = () => {
           </div>
           
           <ConverterCard />
+
+          <BatchConverter />
           
           {/* Information Section */}
           <div className="mt-16 grid grid-cols-1 md:grid-cols-4 gap-8 text-sm text-slate-600">
