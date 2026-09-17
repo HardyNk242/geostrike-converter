@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      base: "/geostrike-converter/",
+      base: "/",
       server: {
         port: Number(process.env.PORT) || 3100,
         host: '0.0.0.0',
