@@ -91,3 +91,31 @@ def test_dataframe_columns():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+def test_formats_match_site_templates():
+    import pandas as pd
+    from geostrike_batch import process_dataframe
+    cases = {
+        "strike_sense": (pd.DataFrame({"ID": ["A", "B", "C"], "Strike": [45, 225, 120], "Dip": [30, 30, 60],
+                                       "Sens_pendage": ["SE", "NW", "S"], "Commentaire": ["x", "", "y"]}),
+                         ["045/30", "225/30", "120/60"]),
+        "rhr": (pd.DataFrame({"Strike_RHR": [45, 300], "Dip": [30, 75]}), ["045/30", "300/75"]),
+        "dipdir": (pd.DataFrame({"Dip": [30, 75], "DipDir": [135, 30]}), ["045/30", "300/75"]),
+        "quadrant": (pd.DataFrame({"Strike": ["N45E", "S30W"], "Dip": [30, 60], "Sens_pendage": ["SE", "NW"]}),
+                     ["045/30", "210/60"]),
+        "strike180": (pd.DataFrame({"Strike": [45, 45, 120], "Dip": [30, 30, 60], "Sens du pendage": ["SE", "", "NE"]}),
+                      ["045/30", "045/30", "300/60"]),
+    }
+    for fmt, (df, expected) in cases.items():
+        out = process_dataframe(df, fmt=fmt)
+        assert list(out["Valid"]) == ["OK"] * len(expected), (fmt, out["Error"].tolist())
+        assert list(out["RHR"]) == expected, fmt
+        if "Commentaire" in df.columns:
+            assert list(out["Commentaire"]) == list(df["Commentaire"])
+    # collision handling + output selection + French 'O' for west
+    df = pd.DataFrame({"Strike": [45, 45], "Dip": [30, 30], "Sens_pendage": ["O", ""]})
+    out = process_dataframe(df, fmt="strike_sense", outputs=["rhr", "numeric"])
+    assert list(out.columns) == ["Strike", "Dip", "Sens_pendage", "Input_Mode", "Valid", "Error",
+                                 "RHR", "Strike_RHR", "Dip_conv", "DipDir"]
+    assert out["RHR"][0] == "225/30" and out["Valid"][1] == "ERROR"

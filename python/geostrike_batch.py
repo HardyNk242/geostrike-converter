@@ -28,7 +28,16 @@ Utilisation en ligne de commande
 --------------------------------
   python geostrike_batch.py mesures.xlsx                  -> mesures_converted.xlsx
   python geostrike_batch.py mesures.csv -o resultat.csv
-  python geostrike_batch.py mesures.xlsx --mode RHR       (format par défaut)
+  python geostrike_batch.py mesures.xlsx --format strike_sense
+  python geostrike_batch.py mesures.xlsx --outputs quadrant,rhr,illustrator
+
+Types de données de départ (--format) — mêmes modèles que le site :
+  strike_sense : Strike 0-360 + Dip + Sens_pendage (N,S,E,W,NE...)  -> azimut sans RHR
+  rhr          : Strike_RHR + Dip                                    -> règle de la main droite
+  dipdir       : Dip + DipDir                                        -> dip / direction de pendage
+  quadrant     : Strike "N45E" + Dip + Sens_pendage                  -> quadrant
+  strike180    : Strike 0-180 + Dip + Sens_pendage facultatif        -> azimut si sens, sinon RHR
+  auto (défaut): colonne "Mesure" en texte libre ou colonnes mixtes, détection par ligne
 
 Colonnes acceptées dans le fichier d'entrée (insensible à la casse) :
   * une colonne texte "notation" / "mesure" / "measurement" / "value"
@@ -268,7 +277,7 @@ def _clean_quad(q: Optional[str]) -> Optional[str]:
     """Retourne NE/SE/SW/NW, ou une lettre seule N/S/E/W (résolue plus tard)."""
     if not q:
         return None
-    q = q.upper()
+    q = re.sub(r"[^NSEW]", "", str(q).upper().replace("O", "W"))
     return q if q in QUADRANTS or q in ("N", "S", "E", "W") else None
 
 
@@ -344,7 +353,14 @@ _STRIKE_COLS = ("strike", "direction", "azimut", "azimuth", "az", "quad_angle", 
 _DIP_COLS = ("dip", "pendage", "plunge")
 _DIPDIR_COLS = ("dipdir", "dip_dir", "dip_direction", "dipdirection",
                 "direction_pendage", "dir_pendage", "dd")
-_QUAD_COLS = ("quad", "quadrant", "dip_quad", "dipquad", "dip_quadrant")
+_QUAD_COLS = ("sens_pendage", "sens_du_pendage", "sens", "sense", "dip_sense",
+              "quad", "quadrant", "dip_quad", "dipquad", "dip_quadrant")
+_STRIKE_COLS = _STRIKE_COLS + ("strike_rhr",)
+FORMATS = ("auto", "strike_sense", "rhr", "dipdir", "quadrant", "strike180")
+OUTPUT_GROUPS = {
+    "quadrant": ["Quadrant"], "azimuth": ["Azimuth"], "rhr": ["RHR"], "dipdir": ["DipDipDir"],
+    "numeric": ["Strike_RHR", "Dip", "DipDir"], "illustrator": ["Illustrator_Strike", "Illustrator_DipTick"],
+}
 _MODE_COLS = ("mode", "format", "notation_type", "type")
 
 
@@ -374,8 +390,72 @@ def _is_blank(v) -> bool:
     return v is None or (isinstance(v, float) and math.isnan(v)) or str(v).strip() in ("", "nan", "None")
 
 
-def row_to_input(row: dict, columns, default_mode: str = "auto") -> PlaneInput:
-    """Construit un PlaneInput depuis une ligne (dict colonne -> valeur)."""
+def _quadrant_from_raw(raw: str, dip: float, sense: Optional[str]) -> PlaneInput:
+    m = re.match(r"^\s*([NS])\s*(\d+(?:\.\d+)?)\s*([EW])\s*$", str(raw), re.I)
+    if not m:
+        raise ValueError(f"Unrecognised quadrant strike '{raw}' (expected e.g. N45E)")
+    if not sense:
+        raise ValueError("Missing dip sense (Sens_pendage column) for quadrant format")
+    start, ang, end = m.group(1).upper(), float(m.group(2)), m.group(3).upper()
+    az = {("N", "E"): ang, ("S", "E"): 180 - ang, ("S", "W"): 180 + ang, ("N", "W"): 360 - ang}[(start, end)]
+    q = _resolve_single_letter(sense, az) if len(sense) == 1 else sense
+    return PlaneInput(mode="Quadrant", dip=dip, quad_start=start, quad_angle=ang, quad_end=end, quad_dip_quad=q)
+
+
+def _azimuth_with_sense(strike: float, dip: float, sense: str) -> PlaneInput:
+    q = _resolve_single_letter(sense, strike) if len(sense) == 1 else sense
+    return PlaneInput(mode="Azimuth", dip=dip, az_strike=strike, az_dip_quad=q)
+
+
+def row_to_input(row: dict, columns, default_mode: str = "auto", fmt: str = "auto") -> PlaneInput:
+    """Construit un PlaneInput depuis une ligne (dict colonne -> valeur).
+
+    fmt : type de données de départ (voir FORMATS). "auto" = détection par ligne.
+    """
+    if fmt != "auto":
+        strike_col = _find_col(columns, _STRIKE_COLS)
+        dip_col = _find_col(columns, _DIP_COLS)
+        dipdir_col = _find_col(columns, _DIPDIR_COLS)
+        sense_col = _find_col(columns, _QUAD_COLS)
+
+        def num(col):
+            if col is None or _is_blank(row.get(col)):
+                return None
+            return float(str(row[col]).replace(",", ".").replace("°", "").strip())
+
+        dip = num(dip_col)
+        if dip is None:
+            raise ValueError("Missing dip value")
+        sense_raw = None if sense_col is None or _is_blank(row.get(sense_col)) else str(row[sense_col])
+        sense = _clean_quad(sense_raw) if sense_raw else None
+        if sense_raw and not sense:
+            raise ValueError(f"Unrecognised dip sense '{sense_raw}' (use N, S, E, W, NE, SE, SW, NW)")
+        strike_raw = row.get(strike_col) if strike_col else None
+
+        if fmt == "dipdir":
+            dd = num(dipdir_col)
+            if dd is None:
+                raise ValueError("Missing dip direction (DipDir column)")
+            return PlaneInput(mode="DipDipDir", dip=dip, dd_dip_dir=dd)
+        if fmt == "quadrant":
+            if not isinstance(strike_raw, str) or not re.match(r"^\s*[NS]\s*\d", strike_raw, re.I):
+                raise ValueError(f"Strike must be a quadrant bearing like N45E (got '{strike_raw}')")
+            return _quadrant_from_raw(strike_raw, dip, sense)
+        strike = num(strike_col)
+        if strike is None:
+            raise ValueError("Missing strike value")
+        if fmt == "rhr":
+            return PlaneInput(mode="RHR", dip=dip, rhr_strike=strike)
+        if fmt == "strike_sense":
+            if not sense:
+                raise ValueError("Missing dip sense (Sens_pendage column): required for non-RHR strike")
+            return _azimuth_with_sense(strike, dip, sense)
+        if fmt == "strike180":
+            if strike > 180:
+                raise ValueError(f"Strike {strike} is outside 0-180 (use the 0-360 + dip sense format)")
+            return _azimuth_with_sense(strike, dip, sense) if sense else PlaneInput(mode="RHR", dip=dip, rhr_strike=strike)
+        raise ValueError(f"Unknown format '{fmt}'")
+
     mode_col = _find_col(columns, _MODE_COLS)
     mode = _norm_mode(row.get(mode_col)) if mode_col else None
     mode = mode or default_mode
@@ -436,15 +516,19 @@ def row_to_input(row: dict, columns, default_mode: str = "auto") -> PlaneInput:
     raise ValueError(f"Unknown mode '{mode}'")
 
 
-def process_dataframe(df, default_mode: str = "auto"):
-    """Ajoute les colonnes de conversion à un DataFrame et le retourne."""
+def process_dataframe(df, default_mode: str = "auto", fmt: str = "auto", outputs=None):
+    """Ajoute les colonnes de conversion à un DataFrame et le retourne.
+
+    outputs : liste de groupes de sortie (clés de OUTPUT_GROUPS) ; None = tous.
+    Une colonne calculée homonyme d'une colonne source est suffixée "_conv".
+    """
     import pandas as pd
 
     results = []
     for _, r in df.iterrows():
         row = r.to_dict()
         try:
-            inp = row_to_input(row, df.columns, default_mode)
+            inp = row_to_input(row, df.columns, default_mode, fmt)
             res = calculate_conversion(inp)
             out = res.as_row()
             out["Input_Mode"] = inp.mode
@@ -454,11 +538,16 @@ def process_dataframe(df, default_mode: str = "auto"):
         results.append(out)
 
     res_df = pd.DataFrame(results)
-    cols = ["Input_Mode"] + [c for c in res_df.columns if c != "Input_Mode"]
-    return pd.concat([df.reset_index(drop=True), res_df[cols]], axis=1)
+    groups = list(OUTPUT_GROUPS) if outputs is None else [g for g in OUTPUT_GROUPS if g in outputs]
+    cols = ["Input_Mode", "Valid", "Error"] + [c for g in groups for c in OUTPUT_GROUPS[g]]
+    res_df = res_df[cols]
+    src_cols = {str(c) for c in df.columns}
+    res_df = res_df.rename(columns={c: f"{c}_conv" for c in cols if c in src_cols})
+    return pd.concat([df.reset_index(drop=True), res_df], axis=1)
 
 
-def process_file(path, output=None, default_mode: str = "auto", sheet=0) -> Path:
+def process_file(path, output=None, default_mode: str = "auto", sheet=0,
+                 fmt: str = "auto", outputs=None) -> Path:
     import pandas as pd
 
     path = Path(path)
@@ -467,7 +556,7 @@ def process_file(path, output=None, default_mode: str = "auto", sheet=0) -> Path
     else:
         df = pd.read_csv(path, sep=None, engine="python")
 
-    out_df = process_dataframe(df, default_mode)
+    out_df = process_dataframe(df, default_mode, fmt, outputs)
 
     if output is None:
         ext = ".xlsx" if path.suffix.lower() in (".xlsx", ".xlsm", ".xls") else ".csv"
@@ -494,10 +583,15 @@ def main(argv=None):
     p.add_argument("-o", "--output", help="Fichier de sortie (.xlsx ou .csv). Défaut: <input>_converted.<ext>")
     p.add_argument("--mode", default="auto", choices=("auto",) + MODES,
                    help="Format d'entrée par défaut pour les lignes ambiguës (défaut: auto)")
+    p.add_argument("--format", default="auto", choices=FORMATS, dest="fmt",
+                   help="Type de données de départ (modèle utilisé). Défaut: auto")
+    p.add_argument("--outputs", default=None,
+                   help="Groupes de sortie séparés par des virgules: " + ",".join(OUTPUT_GROUPS) + " (défaut: tous)")
     p.add_argument("--sheet", default="0", help="Nom ou index de la feuille Excel (défaut: 0)")
     args = p.parse_args(argv)
     sheet = int(args.sheet) if str(args.sheet).isdigit() else args.sheet
-    process_file(args.input, args.output, args.mode, sheet)
+    outputs = [o.strip() for o in args.outputs.split(",")] if args.outputs else None
+    process_file(args.input, args.output, args.mode, sheet, args.fmt, outputs)
 
 
 if __name__ == "__main__":

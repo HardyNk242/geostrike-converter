@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Quadrant, CompassDir, InputMode, PlaneInput } from '../types';
 import { calculateConversion } from '../utils/geoMath';
+import { illustratorAngle } from '../utils/batch';
+import { useT } from '../i18n';
 import Compass from './Compass';
 import { GoogleGenAI, Type } from "@google/genai";
 
 const ConverterCard: React.FC = () => {
+  const { t } = useT();
   const [input, setInput] = useState<PlaneInput>({
     mode: InputMode.Quadrant,
     dip: 45,
@@ -86,7 +89,7 @@ const ConverterCard: React.FC = () => {
       setAiText(''); 
     } catch (error) {
       console.error("AI Parsing Error:", error);
-      alert("Error parsing text. Please try a different format or ensure the input looks like a measurement (e.g., 'N45E 30SE').");
+      alert(t('ai_error'));
     } finally {
       setIsAiLoading(false);
     }
@@ -109,9 +112,9 @@ const ConverterCard: React.FC = () => {
         
         <div className="mb-6">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            Manual Controls
+            {t('manual_title')}
           </h2>
-          <p className="text-sm text-slate-500 mt-1">Fine-tune your measurements</p>
+          <p className="text-sm text-slate-500 mt-1">{t('manual_subtitle')}</p>
         </div>
 
         {/* Mode Selector */}
@@ -135,7 +138,7 @@ const ConverterCard: React.FC = () => {
           {/* Dynamic Form Fields */}
           {input.mode === InputMode.Quadrant && (
             <div className="animate-in fade-in slide-in-from-left-2 duration-300">
-              <label className="block text-sm font-bold text-slate-600 mb-3">Strike (Quadrant)</label>
+              <label className="block text-sm font-bold text-slate-600 mb-3">{t('strike_quadrant')}</label>
               <div className="flex items-center gap-2 bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-inner">
                 <select 
                   value={input.quadStart}
@@ -166,7 +169,7 @@ const ConverterCard: React.FC = () => {
 
           {input.mode === InputMode.Azimuth && (
             <div className="animate-in fade-in slide-in-from-left-2 duration-300">
-              <label className="block text-sm font-bold text-slate-600 mb-3">Strike Azimuth (0-360°)</label>
+              <label className="block text-sm font-bold text-slate-600 mb-3">{t('strike_azimuth')}</label>
               <input 
                 type="number" 
                 value={input.azStrike}
@@ -179,7 +182,7 @@ const ConverterCard: React.FC = () => {
 
           {input.mode === InputMode.RHR && (
             <div className="animate-in fade-in slide-in-from-left-2 duration-300">
-              <label className="block text-sm font-bold text-slate-600 mb-3">RHR Strike (0-360°)</label>
+              <label className="block text-sm font-bold text-slate-600 mb-3">{t('strike_rhr')}</label>
               <input 
                 type="number" 
                 value={input.rhrStrike}
@@ -192,7 +195,7 @@ const ConverterCard: React.FC = () => {
 
           {input.mode === InputMode.DipDipDir && (
              <div className="animate-in fade-in slide-in-from-left-2 duration-300">
-               <label className="block text-sm font-bold text-slate-600 mb-3">Dip Direction (0-360°)</label>
+               <label className="block text-sm font-bold text-slate-600 mb-3">{t('dip_direction')}</label>
                <input 
                  type="number" 
                  value={input.ddDipDir}
@@ -205,7 +208,7 @@ const ConverterCard: React.FC = () => {
 
           <div className="flex gap-4">
             <div className="flex-1">
-               <label className="block text-sm font-bold text-slate-600 mb-3">Dip Angle (0-90°)</label>
+               <label className="block text-sm font-bold text-slate-600 mb-3">{t('dip_angle')}</label>
                <input 
                 type="number" 
                 value={input.dip}
@@ -217,7 +220,7 @@ const ConverterCard: React.FC = () => {
             
             {(input.mode === InputMode.Quadrant || input.mode === InputMode.Azimuth) && (
               <div className="flex-1 animate-in zoom-in duration-300">
-                <label className="block text-sm font-bold text-slate-600 mb-3">Dip Quadrant</label>
+                <label className="block text-sm font-bold text-slate-600 mb-3">{t('dip_quadrant')}</label>
                 <select 
                     value={input.mode === InputMode.Quadrant ? input.quadDipQuad : input.azDipQuad}
                     onChange={(e) => handleChange(input.mode === InputMode.Quadrant ? 'quadDipQuad' : 'azDipQuad', e.target.value)}
@@ -242,8 +245,8 @@ const ConverterCard: React.FC = () => {
                     </svg>
                   </div>
                   <div>
-                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Gemini Intelligence</h3>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Natural Text Parsing</p>
+                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-tighter">{t('ai_title')}</h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{t('ai_subtitle')}</p>
                   </div>
                 </div>
               </div>
@@ -252,7 +255,7 @@ const ConverterCard: React.FC = () => {
                 <textarea
                   value={aiText}
                   onChange={(e) => setAiText(e.target.value)}
-                  placeholder="Paste raw text here... (e.g. N12W 45SW)"
+                  placeholder={t('ai_placeholder')}
                   className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-sm font-mono focus:ring-0 focus:border-indigo-200 outline-none transition-all h-24 resize-none placeholder-slate-300"
                 />
                 <button
@@ -269,10 +272,10 @@ const ConverterCard: React.FC = () => {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                  ) : 'Parse'}
+                  ) : t('ai_parse')}
                 </button>
               </div>
-              <p className="mt-3 text-[10px] text-center text-slate-400 font-medium">AI will auto-detect formats and fill manual fields above.</p>
+              <p className="mt-3 text-[10px] text-center text-slate-400 font-medium">{t('ai_hint')}</p>
             </div>
           </div>
         </div>
@@ -285,61 +288,86 @@ const ConverterCard: React.FC = () => {
 
       {/* Right Column: Results */}
       <div className="space-y-6">
-        {result.error && (
-            <div className="bg-rose-50 border-l-4 border-rose-500 p-5 rounded-2xl shadow-sm animate-bounce-short">
-                <div className="flex items-start">
-                    <svg className="h-5 w-5 text-rose-500 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                    <div className="ml-3">
-                        <p className="text-sm text-rose-800 font-black uppercase tracking-tight">Geometric Constraint Error</p>
-                        <p className="text-sm text-rose-600 mt-1 font-medium">{result.error}</p>
-                    </div>
+        {result.isValid ? (
+            <div role="status" className="bg-emerald-50 border-l-4 border-emerald-500 p-5 rounded-2xl shadow-sm flex items-start gap-3">
+                <svg className="h-5 w-5 text-emerald-600 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <div>
+                    <p className="text-sm text-emerald-800 font-black uppercase tracking-tight">{t('status_valid')}</p>
+                    <p className="text-sm text-emerald-700 mt-1 font-medium">{t('status_valid_desc')}</p>
+                </div>
+            </div>
+        ) : (
+            <div role="alert" className="bg-rose-50 border-l-4 border-rose-500 p-5 rounded-2xl shadow-sm flex items-start gap-3">
+                <svg className="h-5 w-5 text-rose-500 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+                <div>
+                    <p className="text-sm text-rose-800 font-black uppercase tracking-tight">{t('status_error')}</p>
+                    <p className="text-sm text-rose-600 mt-1 font-medium">{result.error}</p>
                 </div>
             </div>
         )}
 
         <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100">
-           <h2 className="text-xl font-bold text-slate-800 mb-6">Generated Notations</h2>
+           <h2 className="text-xl font-bold text-slate-800 mb-6">{t('results_title')}</h2>
            
            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                <ResultRow 
                  label="Quadrant" 
                  value={result.quadrantNotation} 
-                 description="Strike Dip/Quad"
+                 description={t('res_quadrant_desc')}
                  highlight={input.mode === InputMode.Quadrant}
                />
                <ResultRow 
                  label="Azimuth" 
                  value={result.azimuthNotation} 
-                 description="Az/Dip+Quad"
+                 description={t('res_azimuth_desc')}
                  highlight={input.mode === InputMode.Azimuth}
                />
                <ResultRow 
                  label="RHR (Right Hand Rule)" 
                  value={result.rhrNotation} 
-                 description="Standard Strike/Dip"
+                 description={t('res_rhr_desc')}
                  highlight={input.mode === InputMode.RHR}
                />
                <ResultRow 
                  label="Dip / DipDir" 
                  value={result.dipDipDirNotation} 
-                 description="Vector Notation"
+                 description={t('res_dipdir_desc')}
                  highlight={input.mode === InputMode.DipDipDir}
                />
+           </div>
+
+           <div className="mt-6 pt-6 border-t border-slate-100">
+             <div className="flex items-baseline justify-between mb-3">
+               <h3 className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{t('illustrator_title')}</h3>
+               <span className="text-[10px] text-slate-400 font-medium">{t('illustrator_desc')}</span>
+             </div>
+             <div className="grid grid-cols-2 gap-4">
+               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                 <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">{t('illustrator_strike')}</div>
+                 <div className="text-2xl font-mono font-bold text-slate-800 tabular-nums">{result.isValid ? `${Math.round(illustratorAngle(result.rhrStrike)).toString().padStart(3, '0')}°` : '---'}</div>
+               </div>
+               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                 <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">{t('illustrator_dip')}</div>
+                 <div className="text-2xl font-mono font-bold text-slate-800 tabular-nums">{result.isValid ? `${Math.round(illustratorAngle(result.dipDirection)).toString().padStart(3, '0')}°` : '---'}</div>
+               </div>
+             </div>
            </div>
         </div>
 
         {/* Visualizer Desktop Placement */}
         <div className="hidden lg:block bg-slate-900 p-8 rounded-3xl shadow-2xl border border-slate-800 relative group overflow-hidden">
             <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 blur-3xl -mr-16 -mt-16 group-hover:bg-indigo-500/20 transition-colors"></div>
-            <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-[0.2em] relative z-10">Stereographic Projection</h3>
+            <h3 className="text-sm font-black text-slate-400 mb-6 uppercase tracking-[0.2em] relative z-10">{t('stereo_title')}</h3>
             <div className="relative z-10 scale-110">
               <Compass strike={result.rhrStrike} dip={result.dip} dipDirection={result.dipDirection} isValid={result.isValid} />
             </div>
             <div className="mt-8 text-center relative z-10">
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest max-w-[200px] mx-auto leading-relaxed">
-                Equal Angle (Wulff) projection • Lower Hemisphere
+                {t('stereo_desc')}
               </p>
             </div>
         </div>

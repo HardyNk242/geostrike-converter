@@ -21,26 +21,29 @@ View your app in AI Studio: https://ai.studio/apps/drive/1oF04VaxbHlLIJW_P7NvSS-
 
 ## Batch conversion (Excel / CSV)
 
-The web app has a **Batch Conversion** section: import a `.xlsx` / `.csv` list of
-measurements (or paste one per line), convert everything at once and export the
-result as Excel or CSV. A template can be downloaded from the page.
+The **Plusieurs mesures / Batch** page is a 4-step flow:
 
-Recognised columns (case-insensitive): `Mesure` / `notation` (e.g. `N45E/30SE`,
-`045/30SE`, `045/30`, `30/135`) **or** `strike`, `dip`, `dipdir`, `quad`, plus an
-optional `mode` (`Quadrant`, `Azimuth`, `RHR`, `DipDipDir`). Every other column
-(station, lithology, X/Y…) is copied unchanged into the export.
+1. **Source data format** — pick how your measurements are written:
+   `strike_sense` (Strike 0-360 + Dip + Sens_pendage, non-RHR), `rhr` (Strike_RHR + Dip),
+   `dipdir` (Dip + DipDir), `quadrant` (N45E + Dip + Sens_pendage),
+   `strike180` (Strike 0-180 + Dip, sense optional: with sense = azimuth, without = RHR),
+   or `auto` (free-text `Mesure` column such as `N45E/30SE`, `045/30`, `30/135`).
+2. **Template** — download the matching `.xlsx` (`ID | … | Commentaire`). The Commentaire
+   column and any extra column are copied unchanged to the export.
+3. **Import** — `.xlsx` / `.csv` (UTF-8 or Windows-1252), or paste a list.
+4. **Outputs** — tick the formats to append (Quadrant, Azimuth, RHR, Dip/DipDir, numeric
+   values, Illustrator angles) and export as Excel or CSV.
 
-Output columns: `Input_Mode, Valid, Error, Quadrant, Azimuth, RHR, DipDipDir,
-Strike_RHR, Dip, DipDir, Illustrator_Strike, Illustrator_DipTick`.
+The UI is available in French and English (toggle in the header).
 
 ### Python version
 
-`python/geostrike_batch.py` is a standalone port of the same formulas:
+`python/geostrike_batch.py` is a standalone port of the same formulas and formats:
 
 ```bash
 pip install pandas openpyxl
-python python/geostrike_batch.py mesures.xlsx              # -> mesures_converted.xlsx
-python python/geostrike_batch.py mesures.csv -o out.csv --mode RHR
+python python/geostrike_batch.py mesures.xlsx --format strike_sense   # -> mesures_converted.xlsx
+python python/geostrike_batch.py mesures.csv -o out.csv --format rhr --outputs quadrant,dipdir
 ```
 
 Tests: `python -m pytest python/`. Sample input: `python/exemple_mesures.xlsx`.

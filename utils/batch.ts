@@ -4,7 +4,72 @@ import { calculateConversion, normalize } from './geoMath';
 // Batch parsing / conversion of tabular measurements.
 // Mirrors python/geostrike_batch.py — keep both in sync.
 
-export type DefaultMode = 'auto' | InputMode;
+/**
+ * How the source spreadsheet is laid out. Each format has its own template.
+ *  - auto        : free notation column ("N45E/30SE", "045/30", "30/135"...) or numeric columns, guessed per row
+ *  - strike_sense: Strike 0-360 (any convention) + Dip + dip sense letter  -> azimuth, non-RHR
+ *  - rhr         : Strike RHR 0-360 + Dip                                 -> RHR
+ *  - dipdir      : Dip + Dip direction 0-360                              -> Dip/DipDir
+ *  - quadrant    : Strike "N45E" + Dip + dip sense letter                 -> quadrant
+ *  - strike180   : Strike 0-180 + Dip + optional dip sense (blank = RHR)  -> azimuth with/without RHR
+ */
+export type BatchFormat = 'auto' | 'strike_sense' | 'rhr' | 'dipdir' | 'quadrant' | 'strike180';
+export const BATCH_FORMATS: BatchFormat[] = ['strike_sense', 'rhr', 'dipdir', 'quadrant', 'strike180', 'auto'];
+
+/** Output column groups the user can pick. */
+export type OutputGroup = 'quadrant' | 'azimuth' | 'rhr' | 'dipdir' | 'numeric' | 'illustrator';
+export const OUTPUT_GROUPS: OutputGroup[] = ['quadrant', 'azimuth', 'rhr', 'dipdir', 'numeric', 'illustrator'];
+const GROUP_COLUMNS: Record<OutputGroup, string[]> = {
+  quadrant: ['Quadrant'],
+  azimuth: ['Azimuth'],
+  rhr: ['RHR'],
+  dipdir: ['DipDipDir'],
+  numeric: ['Strike_RHR', 'Dip', 'DipDir'],
+  illustrator: ['Illustrator_Strike', 'Illustrator_DipTick'],
+};
+export const BASE_OUTPUT_COLUMNS = ['Input_Mode', 'Valid', 'Error'];
+export const outputColumnsFor = (groups: OutputGroup[]): string[] =>
+  [...BASE_OUTPUT_COLUMNS, ...OUTPUT_GROUPS.filter(g => groups.includes(g)).flatMap(g => GROUP_COLUMNS[g])];
+
+/** Template columns per format (ID first, comment last — the comment is never touched). */
+export const TEMPLATE_COLUMNS: Record<BatchFormat, string[]> = {
+  strike_sense: ['ID', 'Strike', 'Dip', 'Sens_pendage', 'Commentaire'],
+  rhr: ['ID', 'Strike_RHR', 'Dip', 'Commentaire'],
+  dipdir: ['ID', 'Dip', 'DipDir', 'Commentaire'],
+  quadrant: ['ID', 'Strike', 'Dip', 'Sens_pendage', 'Commentaire'],
+  strike180: ['ID', 'Strike', 'Dip', 'Sens_pendage', 'Commentaire'],
+  auto: ['ID', 'Mesure', 'Commentaire'],
+};
+export const TEMPLATE_EXAMPLES: Record<BatchFormat, Record<string, unknown>[]> = {
+  strike_sense: [
+    { ID: 'ST1', Strike: 45, Dip: 30, Sens_pendage: 'SE', Commentaire: 'Stratification' },
+    { ID: 'ST2', Strike: 225, Dip: 30, Sens_pendage: 'NW', Commentaire: '' },
+    { ID: 'ST3', Strike: 120, Dip: 60, Sens_pendage: 'S', Commentaire: 'Faille normale' },
+  ],
+  rhr: [
+    { ID: 'ST1', Strike_RHR: 45, Dip: 30, Commentaire: 'Stratification' },
+    { ID: 'ST2', Strike_RHR: 300, Dip: 75, Commentaire: '' },
+  ],
+  dipdir: [
+    { ID: 'ST1', Dip: 30, DipDir: 135, Commentaire: 'Stratification' },
+    { ID: 'ST2', Dip: 75, DipDir: 30, Commentaire: '' },
+  ],
+  quadrant: [
+    { ID: 'ST1', Strike: 'N45E', Dip: 30, Sens_pendage: 'SE', Commentaire: 'Stratification' },
+    { ID: 'ST2', Strike: 'S30W', Dip: 60, Sens_pendage: 'NW', Commentaire: '' },
+  ],
+  strike180: [
+    { ID: 'ST1', Strike: 45, Dip: 30, Sens_pendage: 'SE', Commentaire: 'avec sens' },
+    { ID: 'ST2', Strike: 45, Dip: 30, Sens_pendage: '', Commentaire: 'sans sens = RHR' },
+    { ID: 'ST3', Strike: 120, Dip: 60, Sens_pendage: 'NE', Commentaire: '' },
+  ],
+  auto: [
+    { ID: 'ST1', Mesure: 'N45E/30SE', Commentaire: 'quadrant' },
+    { ID: 'ST2', Mesure: '045/30SE', Commentaire: 'azimut + sens' },
+    { ID: 'ST3', Mesure: '045/30', Commentaire: 'RHR' },
+    { ID: 'ST4', Mesure: '30/135', Commentaire: 'dip / dipdir' },
+  ],
+};
 
 export interface BatchRow {
   index: number;
@@ -21,14 +86,16 @@ export const illustratorAngle = (azimuth: number): number => normalize(90 - azim
 // --- Column detection --------------------------------------------------------
 
 const NOTATION_COLS = ['notation', 'mesure', 'mesures', 'measurement', 'measure', 'value', 'valeur', 'plan', 'plane', 'orientation'];
-const STRIKE_COLS = ['strike', 'direction', 'azimut', 'azimuth', 'az', 'quad_angle', 'angle'];
+const STRIKE_COLS = ['strike', 'strike_rhr', 'direction', 'azimut', 'azimuth', 'az', 'quad_angle', 'angle'];
 const DIP_COLS = ['dip', 'pendage', 'plunge'];
 const DIPDIR_COLS = ['dipdir', 'dip_dir', 'dip_direction', 'dipdirection', 'direction_pendage', 'dir_pendage', 'dd'];
-const QUAD_COLS = ['quad', 'quadrant', 'dip_quad', 'dipquad', 'dip_quadrant'];
+const SENSE_COLS = ['sens_pendage', 'sens_du_pendage', 'sens', 'sense', 'dip_sense', 'quad', 'quadrant', 'dip_quad', 'dipquad', 'dip_quadrant'];
 const MODE_COLS = ['mode', 'format', 'notation_type', 'type'];
 
+const normKey = (c: unknown) => String(c).trim().toLowerCase().replace(/\s+/g, '_');
+
 const findCol = (columns: string[], candidates: string[]): string | undefined => {
-  const lower = new Map(columns.map(c => [String(c).trim().toLowerCase().replace(/\s+/g, '_'), c]));
+  const lower = new Map(columns.map(c => [normKey(c), c]));
   for (const cand of candidates) {
     const hit = lower.get(cand);
     if (hit !== undefined) return hit;
@@ -71,9 +138,10 @@ const quadFromAzimuth = (angle: number): Quadrant => {
   return Quadrant.NW;
 };
 
+// Accepts NE/SE/SW/NW, single letters N/S/E/W, and French O (ouest) for W.
 const cleanQuad = (q?: string): string | undefined => {
   if (!q) return undefined;
-  const u = q.toUpperCase();
+  const u = q.toUpperCase().replace(/O/g, 'W').replace(/[^NSEW]/g, '');
   return (Object.values(Quadrant) as string[]).includes(u) || ['N', 'S', 'E', 'W'].includes(u) ? u : undefined;
 };
 
@@ -86,6 +154,11 @@ const resolveSingleLetter = (letter: string, strikeAz: number): Quadrant => {
   return ({ E: Quadrant.SE, W: Quadrant.NW, N: Quadrant.NE, S: Quadrant.SW } as Record<string, Quadrant>)[letter];
 };
 
+const quadrantStrikeToAz = (start: string, end: string, ang: number) =>
+  start === 'N' && end === 'E' ? ang : start === 'S' && end === 'E' ? 180 - ang : start === 'S' && end === 'W' ? 180 + ang : 360 - ang;
+
+export type DefaultMode = 'auto' | InputMode;
+
 export const parseNotation = (text: string, defaultMode: DefaultMode = 'auto'): PlaneInput => {
   const s = String(text).trim();
   if (!s) throw new Error('Empty measurement');
@@ -96,9 +169,9 @@ export const parseNotation = (text: string, defaultMode: DefaultMode = 'auto'): 
     const ang = parseFloat(m[2]);
     const end = m[3].toUpperCase() as CompassDir.E | CompassDir.W;
     const dip = parseFloat(m[4]);
-    const az = start === 'N' && end === 'E' ? ang : start === 'S' && end === 'E' ? 180 - ang : start === 'S' && end === 'W' ? 180 + ang : 360 - ang;
+    const az = quadrantStrikeToAz(start, end, ang);
     let q = cleanQuad(m[5]);
-    if (!q) throw new Error(`Missing dip quadrant in '${s}'`);
+    if (!q) throw new Error(`Missing dip sense in '${s}'`);
     if (q.length === 1) q = resolveSingleLetter(q, az);
     return { mode: InputMode.Quadrant, dip, quadStart: start, quadAngle: ang, quadEnd: end, quadDipQuad: q as Quadrant };
   }
@@ -118,63 +191,105 @@ export const parseNotation = (text: string, defaultMode: DefaultMode = 'auto'): 
   if (mode === 'auto') mode = b > 90 ? InputMode.DipDipDir : InputMode.RHR;
   if (mode === InputMode.DipDipDir) return { mode, dip: a, ddDipDir: b };
   if (mode === InputMode.RHR) return { mode, dip: b, rhrStrike: a };
-  if (mode === InputMode.Azimuth) throw new Error(`Azimuth notation needs a dip quadrant (e.g. 045/30SE): '${s}'`);
+  if (mode === InputMode.Azimuth) throw new Error(`Azimuth notation needs a dip sense (e.g. 045/30SE): '${s}'`);
   throw new Error(`Quadrant notation needs N/S and E/W letters (e.g. N45E/30SE): '${s}'`);
 };
 
 // --- Row -> PlaneInput -------------------------------------------------------
 
-export const rowToInput = (row: Record<string, unknown>, columns: string[], defaultMode: DefaultMode = 'auto'): PlaneInput => {
-  const modeCol = findCol(columns, MODE_COLS);
-  const mode: DefaultMode = (modeCol ? normMode(row[modeCol]) : undefined) ?? defaultMode;
-
-  const notationCol = findCol(columns, NOTATION_COLS);
-  if (notationCol && !isBlank(row[notationCol])) return parseNotation(String(row[notationCol]), mode);
-
+export const rowToInput = (row: Record<string, unknown>, columns: string[], format: BatchFormat = 'auto'): PlaneInput => {
   const strikeCol = findCol(columns, STRIKE_COLS);
   const dipCol = findCol(columns, DIP_COLS);
   const dipdirCol = findCol(columns, DIPDIR_COLS);
-  const quadCol = findCol(columns, QUAD_COLS);
+  const senseCol = findCol(columns, SENSE_COLS);
+  const notationCol = findCol(columns, NOTATION_COLS);
 
   const dip = dipCol ? toNum(row[dipCol]) : undefined;
-  if (dip === undefined) throw new Error('Missing dip value');
-
-  let quad = quadCol && !isBlank(row[quadCol]) ? String(row[quadCol]).trim().toUpperCase() : '';
-  quad = cleanQuad(quad) ?? '';
-
   const strikeRaw = strikeCol ? row[strikeCol] : undefined;
-  if (typeof strikeRaw === 'string' && /^\s*[NS]\s*\d/i.test(strikeRaw)) {
-    return parseNotation(`${strikeRaw}/${dip}${quad}`, InputMode.Quadrant);
+  const strike = toNum(strikeRaw);
+  const dipdir = dipdirCol ? toNum(row[dipdirCol]) : undefined;
+  const sense = senseCol && !isBlank(row[senseCol]) ? cleanQuad(String(row[senseCol])) : undefined;
+  if (senseCol && !isBlank(row[senseCol]) && !sense) throw new Error(`Unrecognised dip sense '${String(row[senseCol])}' (use N, S, E, W, NE, SE, SW, NW)`);
+  const isQuadStrike = typeof strikeRaw === 'string' && /^\s*[NS]\s*\d/i.test(strikeRaw);
+
+  const needDip = () => { if (dip === undefined) throw new Error('Missing dip value'); return dip; };
+  const needStrike = () => { if (strike === undefined) throw new Error('Missing strike value'); return strike; };
+
+  const azimuthWithSense = (s: number, d: number, letter: string): PlaneInput => ({
+    mode: InputMode.Azimuth, dip: d, azStrike: s, azDipQuad: letter.length === 1 ? resolveSingleLetter(letter, s) : (letter as Quadrant),
+  });
+  const quadrantFromRaw = (raw: string, d: number, letter?: string): PlaneInput => {
+    const m = raw.match(/^\s*([NS])\s*(\d+(?:\.\d+)?)\s*([EW])\s*$/i);
+    if (!m) throw new Error(`Unrecognised quadrant strike '${raw}' (expected e.g. N45E)`);
+    if (!letter) throw new Error('Missing dip sense (Sens_pendage column) for quadrant format');
+    const start = m[1].toUpperCase() as CompassDir.N | CompassDir.S;
+    const ang = parseFloat(m[2]);
+    const end = m[3].toUpperCase() as CompassDir.E | CompassDir.W;
+    const az = quadrantStrikeToAz(start, end, ang);
+    const q = letter.length === 1 ? resolveSingleLetter(letter, az) : (letter as Quadrant);
+    return { mode: InputMode.Quadrant, dip: d, quadStart: start, quadAngle: ang, quadEnd: end, quadDipQuad: q };
+  };
+
+  switch (format) {
+    case 'strike_sense': {
+      const d = needDip(); const s = needStrike();
+      if (!sense) throw new Error('Missing dip sense (Sens_pendage column): required for non-RHR strike');
+      return azimuthWithSense(s, d, sense);
+    }
+    case 'rhr': {
+      const d = needDip(); const s = needStrike();
+      return { mode: InputMode.RHR, dip: d, rhrStrike: s };
+    }
+    case 'dipdir': {
+      const d = needDip();
+      if (dipdir === undefined) throw new Error('Missing dip direction (DipDir column)');
+      return { mode: InputMode.DipDipDir, dip: d, ddDipDir: dipdir };
+    }
+    case 'quadrant': {
+      const d = needDip();
+      if (typeof strikeRaw !== 'string' || !isQuadStrike) throw new Error(`Strike must be a quadrant bearing like N45E (got '${String(strikeRaw ?? '')}')`);
+      return quadrantFromRaw(strikeRaw, d, sense);
+    }
+    case 'strike180': {
+      const d = needDip(); const s = needStrike();
+      if (s > 180) throw new Error(`Strike ${s} is outside 0-180 (use the 0-360 + dip sense format)`);
+      return sense ? azimuthWithSense(s, d, sense) : { mode: InputMode.RHR, dip: d, rhrStrike: s };
+    }
+    default: break;
   }
 
-  const strike = strikeCol ? toNum(row[strikeCol]) : undefined;
-  const dipdir = dipdirCol ? toNum(row[dipdirCol]) : undefined;
+  // ---- auto: per-row detection -------------------------------------------
+  const modeCol = findCol(columns, MODE_COLS);
+  const mode: DefaultMode = (modeCol ? normMode(row[modeCol]) : undefined) ?? 'auto';
+
+  if (notationCol && !isBlank(row[notationCol])) return parseNotation(String(row[notationCol]), mode);
+
+  const d = needDip();
+  if (isQuadStrike) return quadrantFromRaw(strikeRaw as string, d, sense);
 
   let resolved: DefaultMode = mode;
   if (resolved === 'auto') {
-    resolved = dipdir !== undefined && strike === undefined ? InputMode.DipDipDir : quad ? InputMode.Azimuth : InputMode.RHR;
+    resolved = dipdir !== undefined && strike === undefined ? InputMode.DipDipDir : sense ? InputMode.Azimuth : InputMode.RHR;
   }
-
   if (resolved === InputMode.DipDipDir) {
-    if (dipdir === undefined) throw new Error('Missing dip direction (dipdir column)');
-    return { mode: resolved, dip, ddDipDir: dipdir };
+    if (dipdir === undefined) throw new Error('Missing dip direction (DipDir column)');
+    return { mode: resolved, dip: d, ddDipDir: dipdir };
   }
-  if (strike === undefined) throw new Error('Missing strike value');
-  if (resolved === InputMode.RHR) return { mode: resolved, dip, rhrStrike: strike };
+  const s = needStrike();
+  if (resolved === InputMode.RHR) return { mode: resolved, dip: d, rhrStrike: s };
   if (resolved === InputMode.Azimuth) {
-    if (!quad) throw new Error('Missing dip quadrant (quad column) for Azimuth mode');
-    const q = quad.length === 1 ? resolveSingleLetter(quad, strike) : (quad as Quadrant);
-    return { mode: resolved, dip, azStrike: strike, azDipQuad: q };
+    if (!sense) throw new Error('Missing dip sense (Sens_pendage column) for Azimuth mode');
+    return azimuthWithSense(s, d, sense);
   }
-  throw new Error("Quadrant mode needs a strike like 'N45E' (or a notation column)");
+  throw new Error("Quadrant mode needs a strike like 'N45E' (or a Mesure column)");
 };
 
 // --- Batch processing --------------------------------------------------------
 
-export const processRows = (rows: Record<string, unknown>[], columns: string[], defaultMode: DefaultMode = 'auto'): BatchRow[] =>
+export const processRows = (rows: Record<string, unknown>[], columns: string[], format: BatchFormat = 'auto'): BatchRow[] =>
   rows.map((source, index) => {
     try {
-      const input = rowToInput(source, columns, defaultMode);
+      const input = rowToInput(source, columns, format);
       const result = calculateConversion(input);
       return {
         index,
@@ -199,20 +314,15 @@ export const processRows = (rows: Record<string, unknown>[], columns: string[], 
     }
   });
 
-export const OUTPUT_COLUMNS = [
-  'Input_Mode', 'Valid', 'Error', 'Quadrant', 'Azimuth', 'RHR', 'DipDipDir',
-  'Strike_RHR', 'Dip', 'DipDir', 'Illustrator_Strike', 'Illustrator_DipTick',
-] as const;
-
 const r2 = (v?: number) => (v === undefined ? '' : Math.round(v * 100) / 100);
 
-// Source columns first (copied as-is), then computed columns.
-export const toOutputRows = (rows: BatchRow[], columns: string[]): Record<string, unknown>[] =>
+// Source columns first (copied as-is, comments included), then the selected computed columns.
+export const toOutputRows = (rows: BatchRow[], columns: string[], outputCols: string[]): Record<string, unknown>[] =>
   rows.map(({ source, inputMode, result, illustratorStrike, illustratorDipTick }) => {
     const out: Record<string, unknown> = {};
     for (const c of columns) out[c] = source[c] ?? '';
     const ok = result.isValid;
-    Object.assign(out, {
+    const all: Record<string, unknown> = {
       Input_Mode: inputMode,
       Valid: ok ? 'OK' : 'ERROR',
       Error: result.error ?? '',
@@ -225,6 +335,8 @@ export const toOutputRows = (rows: BatchRow[], columns: string[]): Record<string
       DipDir: ok ? r2(result.dipDirection) : '',
       Illustrator_Strike: r2(illustratorStrike),
       Illustrator_DipTick: r2(illustratorDipTick),
-    });
+    };
+    // Never overwrite a source column (e.g. a template "Dip" column): suffix the computed one.
+    for (const c of outputCols) out[columns.includes(c) ? `${c}_conv` : c] = all[c];
     return out;
   });
